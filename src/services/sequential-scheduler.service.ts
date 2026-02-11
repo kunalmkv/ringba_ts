@@ -94,28 +94,32 @@ export class SequentialScheduler {
    */
   private calculateDateRange(service: ServiceConfig): DateRange {
     const now = new Date();
-    const endDate = new Date(now);
-    endDate.setHours(23, 59, 59, 999);
     
+    // Create clean date objects
     let startDate: Date;
+    let endDate: Date;
     
     if (service.currentDayOnly) {
       // Current day only
-      startDate = new Date(now);
-      startDate.setHours(0, 0, 0, 0);
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     } else if (service.daysBack) {
       // Go back N days
-      startDate = new Date(now);
-      startDate.setDate(startDate.getDate() - service.daysBack);
-      startDate.setHours(0, 0, 0, 0);
+      const start = new Date(now);
+      start.setDate(start.getDate() - service.daysBack);
+      startDate = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     } else {
       // Default: current day
-      startDate = new Date(now);
-      startDate.setHours(0, 0, 0, 0);
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     }
     
-    // Format dates
+    // Format dates - handle invalid dates
     const formatDate = (date: Date): string => {
+      if (isNaN(date.getTime())) {
+        throw new Error('Invalid date object in formatDate');
+      }
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const day = String(date.getDate()).padStart(2, '0');
       const year = date.getFullYear();
@@ -123,6 +127,9 @@ export class SequentialScheduler {
     };
     
     const formatDateURL = (date: Date): string => {
+      if (isNaN(date.getTime())) {
+        throw new Error('Invalid date object in formatDateURL');
+      }
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const day = String(date.getDate()).padStart(2, '0');
       const year = date.getFullYear();
@@ -218,9 +225,18 @@ export class SequentialScheduler {
   private async executeElocalFetch(dateRange: DateRange, category: Category | null): Promise<any> {
     // Dynamic import to avoid circular dependencies
     const module = await import('./fetch-elocal-calls.service.js');
-    // The function is curried: config => dateRange => serviceType => category => async
-    const serviceType = dateRange.startDate.getTime() === dateRange.endDate.getTime() ? 'current' : 'historical';
+    
+    // Determine service type based on date range
+    // Compare calendar dates (not timestamps with hours)
+    const startDateOnly = new Date(dateRange.startDate.getFullYear(), dateRange.startDate.getMonth(), dateRange.startDate.getDate());
+    const endDateOnly = new Date(dateRange.endDate.getFullYear(), dateRange.endDate.getMonth(), dateRange.endDate.getDate());
+    const daysDiff = Math.abs((endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24));
+    
+    // If 0-1 days: current, otherwise: historical
+    const serviceType = daysDiff <= 1 ? 'current' : 'historical';
     const actualCategory: Category = category || 'STATIC';
+    
+    // The function is curried: config => dateRange => serviceType => category => async
     return await module.scrapeElocalDataWithDateRange(this.appConfig)(dateRange)(serviceType)(actualCategory)();
   }
   
