@@ -1,0 +1,60 @@
+{
+  "name": "elocal-scrapper-ts",
+  "version": "1.0.0",
+  "description": "eLocal scraping service with TypeScript and Neon DB",
+  "type": "module",
+  "main": "dist/services/fetch-elocal-calls.service.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsx src/test/test-service.ts",
+    "test:current": "tsx src/test/test-service.ts current",
+    "test:historical": "tsx src/test/test-service.ts historical",
+    "test:current-api": "tsx src/test/test-service.ts current-api",
+    "test:historical-api": "tsx src/test/test-service.ts historical-api",
+    "test:smoke": "tsx src/test/smoke-test.ts",
+    "debug:match-call-by-call": "tsx src/test/debug-match-call-by-call.ts",
+    "debug:single-call": "tsx src/test/debug-single-call-match.ts",
+    "diagnose:unmatched": "tsx src/test/diagnose-unmatched-calls.ts",
+    "run:range": "tsx src/test/run-for-date-range.ts",
+    "schema:neon": "tsx src/database/run-schema-neon.ts",
+    "migrate:elocal-columns": "tsx src/database/migrate-elocal-columns.ts",
+    "migrate:elocal-rename-cols": "tsx src/database/migrate-elocal-rename-cols.ts",
+    "migrate:elocal-call-duration": "tsx src/database/migrate-elocal-total-duration-to-call-duration.ts",
+    "migrate:ringba-calls-to-original-sync": "tsx src/database/migrate-ringba-calls-to-original-sync.ts",
+    "migrate:drop-adjustment-cols": "tsx src/database/migrate-drop-adjustment-cols.ts",
+    "migrate:ringba-calls-cols": "tsx src/database/migrate-ringba-calls-cols.ts",
+    "migrate:ringba-revenue-col": "tsx src/database/migrate-ringba-revenue-col.ts",
+    "sync:ringba-original": "tsx src/test/run-ringba-original-sync.ts",
+    "sync:cost": "tsx src/test/run-ringba-cost-sync.ts",
+    "scheduler": "tsx src/test/run-sequential-scheduler.ts",
+    "scheduler:sequential": "tsx src/test/run-sequential-scheduler.ts",
+    "start": "node dist/test/test-service.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "scraping",
+    "elocal",
+    "typescript",
+    "neon",
+    "serverless"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0",
+    "dotenv": "^16.0.0",
+    "fp-ts": "^2.16.1",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
