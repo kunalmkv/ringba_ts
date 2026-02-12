@@ -26,30 +26,44 @@ export const getElocalCalls =
 
         const url = new URL(`${ELOCAL_BASE_URL}/${uuid}/calls.json`);
 
-        // Add query parameters (API v2 expects MM/DD/YYYY via URL encoding)
-        // startDateURL and endDateURL are already in MM%2FDD%2FYYYY format
-        url.searchParams.append('start_date', dateRange.startDateURL);
+        // eLocal API v2 expects dates as yyyy-MM-dd (per API error message)
+        const toYYYYMMDD = (value: string): string => {
+          const decoded = decodeURIComponent(value);
+          // Already yyyy-MM-dd
+          if (/^\d{4}-\d{2}-\d{2}$/.test(decoded)) return decoded;
+          // MM/DD/YYYY or MM%2FDD%2FYYYY
+          const parts = decoded.split('/');
+          if (parts.length === 3 && parts[0].length <= 2 && parts[1].length <= 2 && parts[2].length === 4) {
+            const y = parts[2];
+            const m = parts[0].padStart(2, '0');
+            const d = parts[1].padStart(2, '0');
+            return `${y}-${m}-${d}`;
+          }
+          throw new Error(`Unsupported date format for eLocal API: ${value}`);
+        };
 
-        // IMPORTANT: Extend end_date by one day for inclusive fetching
-        // eLocal API does not include calls on the end_date itself
-        // Parse from MM%2FDD%2FYYYY format
-        const endDateDecoded = decodeURIComponent(dateRange.endDateURL); // "MM/DD/YYYY"
-        const endDateParts = endDateDecoded.split('/'); // ["MM", "DD", "YYYY"]
-        const endDateObj = new Date(
-          parseInt(endDateParts[2], 10),           // year
-          parseInt(endDateParts[0], 10) - 1,       // month (0-indexed)
-          parseInt(endDateParts[1], 10),           // day
-          0, 0, 0, 0
-        );
-        endDateObj.setDate(endDateObj.getDate() + 1); // Add 1 day
-        
-        // Format back to MM/DD/YYYY
-        const extendedMonth = String(endDateObj.getMonth() + 1).padStart(2, '0');
-        const extendedDay = String(endDateObj.getDate()).padStart(2, '0');
-        const extendedYear = endDateObj.getFullYear();
-        const extendedEndDate = `${extendedMonth}%2F${extendedDay}%2F${extendedYear}`;
+        const startDateAPI = toYYYYMMDD(dateRange.startDateURL);
+        url.searchParams.set('start_date', startDateAPI);
 
-        url.searchParams.append('end_date', extendedEndDate);
+        // Extend end_date by one day for inclusive fetching (API does not include end_date day)
+        const endDecoded = decodeURIComponent(dateRange.endDateURL);
+        let endDateObj: Date;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(endDecoded)) {
+          const [y, m, d] = endDecoded.split('-').map(Number);
+          endDateObj = new Date(y, m - 1, d, 0, 0, 0, 0);
+        } else {
+          const endParts = endDecoded.split('/');
+          endDateObj = new Date(
+            parseInt(endParts[2], 10),
+            parseInt(endParts[0], 10) - 1,
+            parseInt(endParts[1], 10),
+            0, 0, 0, 0
+          );
+        }
+        endDateObj.setDate(endDateObj.getDate() + 1);
+        const extendedEndDateAPI =
+          `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, '0')}-${String(endDateObj.getDate()).padStart(2, '0')}`;
+        url.searchParams.set('end_date', extendedEndDateAPI);
         url.searchParams.append('sortBy', options.sortBy || 'callStartTime');
         url.searchParams.append('sortOrder', options.sortOrder || 'desc');
 

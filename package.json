@@ -29,6 +29,7 @@
     "sync:cost": "tsx src/test/run-ringba-cost-sync.ts",
     "scheduler": "tsx src/test/run-sequential-scheduler.ts",
     "scheduler:sequential": "tsx src/test/run-sequential-scheduler.ts",
+    "scheduler:pm2": "pm2 delete elocal-scheduler 2>/dev/null; pm2 start \"npm run scheduler\" --name elocal-scheduler",
     "start": "node dist/test/test-service.js",
     "clean": "rm -rf dist"
   },
