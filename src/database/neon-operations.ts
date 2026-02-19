@@ -49,7 +49,7 @@ export const createNeonDbOps = () => {
     async createSession(session: Session): Promise<{ session_id: string }> {
       try {
         const result = await sql`
-          INSERT INTO scraping_sessions (session_id, started_at, status)
+          INSERT INTO public.scraping_sessions (session_id, started_at, status)
           VALUES (${session.sessionId}, ${session.startedAt || new Date().toISOString()}, ${session.status || 'running'})
           ON CONFLICT (session_id) DO NOTHING
           RETURNING session_id
@@ -71,35 +71,35 @@ export const createNeonDbOps = () => {
         let updated = 0;
         if (updates.completed_at) {
           const result = await sql`
-            UPDATE scraping_sessions SET completed_at = ${updates.completed_at}
+            UPDATE public.scraping_sessions SET completed_at = ${updates.completed_at}
             WHERE session_id = ${sessionId} RETURNING session_id
           `;
           if (result.length) updated = 1;
         }
         if (updates.status) {
           const result = await sql`
-            UPDATE scraping_sessions SET status = ${updates.status}
+            UPDATE public.scraping_sessions SET status = ${updates.status}
             WHERE session_id = ${sessionId} RETURNING session_id
           `;
           if (result.length) updated = 1;
         }
         if (updates.calls_scraped !== undefined) {
           const result = await sql`
-            UPDATE scraping_sessions SET calls_scraped = ${updates.calls_scraped}
+            UPDATE public.scraping_sessions SET calls_scraped = ${updates.calls_scraped}
             WHERE session_id = ${sessionId} RETURNING session_id
           `;
           if (result.length) updated = 1;
         }
         if (updates.adjustments_scraped !== undefined) {
           const result = await sql`
-            UPDATE scraping_sessions SET adjustments_scraped = ${updates.adjustments_scraped}
+            UPDATE public.scraping_sessions SET adjustments_scraped = ${updates.adjustments_scraped}
             WHERE session_id = ${sessionId} RETURNING session_id
           `;
           if (result.length) updated = 1;
         }
         if (updates.error_message) {
           const result = await sql`
-            UPDATE scraping_sessions SET error_message = ${updates.error_message}
+            UPDATE public.scraping_sessions SET error_message = ${updates.error_message}
             WHERE session_id = ${sessionId} RETURNING session_id
           `;
           if (result.length) updated = 1;
@@ -140,7 +140,7 @@ export const createNeonDbOps = () => {
           // If this is a timestamp correction, check if the corrected timestamp would cause a duplicate
           if (isTimestampCorrection) {
             const duplicateCheck = await sql`
-              SELECT id FROM elocal_call_data
+              SELECT id FROM public.elocal_call_data
               WHERE caller_id = ${normalizedCallerId}
                 AND call_timestamp = ${correctedTimestamp}
                 AND category = ${call.category || 'STATIC'}
@@ -159,7 +159,7 @@ export const createNeonDbOps = () => {
 
           // Check if call exists
           const existingCall = await sql`
-            SELECT id FROM elocal_call_data
+            SELECT id FROM public.elocal_call_data
             WHERE caller_id = ${normalizedCallerId}
               AND call_timestamp = ${lookupTimestamp || ''}
               AND category = ${call.category || 'STATIC'}
@@ -169,7 +169,7 @@ export const createNeonDbOps = () => {
           if (existingCall.length > 0) {
             // Update existing call
             await sql`
-              UPDATE elocal_call_data
+              UPDATE public.elocal_call_data
               SET
                 call_timestamp = ${correctedTimestamp},
                 elocal_payout = ${call.elocalPayout ?? 0},
@@ -196,7 +196,7 @@ export const createNeonDbOps = () => {
           } else {
             // Check if a record with the corrected timestamp already exists
             const existsWithCorrectedTimestamp = await sql`
-              SELECT id FROM elocal_call_data
+              SELECT id FROM public.elocal_call_data
               WHERE caller_id = ${normalizedCallerId}
                 AND call_timestamp = ${correctedTimestamp}
                 AND category = ${call.category || 'STATIC'}
@@ -206,7 +206,7 @@ export const createNeonDbOps = () => {
             if (existsWithCorrectedTimestamp.length > 0) {
               // Update the existing record
               await sql`
-                UPDATE elocal_call_data
+                UPDATE public.elocal_call_data
                 SET
                   elocal_payout = ${call.elocalPayout ?? 0},
                   city_state = ${call.cityState || null},
@@ -227,7 +227,7 @@ export const createNeonDbOps = () => {
             } else {
               // Insert new call
               await sql`
-                INSERT INTO elocal_call_data (
+                INSERT INTO public.elocal_call_data (
                   caller_id, call_timestamp, elocal_payout, category,
                   city_state, zip_code, call_duration,
                   adjustment_time, adjustment_amount, unmatched, ringba_id,
@@ -290,7 +290,7 @@ export const createNeonDbOps = () => {
         for (const adj of adjustments) {
           // Check if adjustment already exists
           const existing = await sql`
-            SELECT id FROM adjustment_details
+            SELECT id FROM public.adjustment_details
             WHERE call_sid = ${adj.callSid || ''}
               OR (
                 caller_id = ${adj.callerId}
@@ -307,7 +307,7 @@ export const createNeonDbOps = () => {
 
           // Insert new adjustment
           await sql`
-            INSERT INTO adjustment_details (
+            INSERT INTO public.adjustment_details (
               time_of_call, adjustment_time, campaign_phone, caller_id,
               duration, call_sid, amount, classification, created_at
             )
@@ -370,7 +370,7 @@ export const createNeonDbOps = () => {
               id, caller_id, call_timestamp, elocal_payout, category,
               ringba_original_payout, ringba_original_revenue, ringba_id, unmatched,
               adjustment_amount, adjustment_time
-            FROM elocal_call_data
+            FROM public.elocal_call_data
             WHERE SUBSTRING(call_timestamp, 1, 10) = ANY(${datesInRange})
               AND category = ${category}
             ORDER BY caller_id, call_timestamp
@@ -381,7 +381,7 @@ export const createNeonDbOps = () => {
               id, caller_id, call_timestamp, elocal_payout, category,
               ringba_original_payout, ringba_original_revenue, ringba_id, unmatched,
               adjustment_amount, adjustment_time
-            FROM elocal_call_data
+            FROM public.elocal_call_data
             WHERE SUBSTRING(call_timestamp, 1, 10) = ANY(${datesInRange})
             ORDER BY caller_id, call_timestamp
           `;
@@ -408,7 +408,7 @@ export const createNeonDbOps = () => {
       try {
         const result = await sql`
           SELECT id, ringba_id, call_timestamp, caller_id, target_id, ringba_payout
-          FROM ringba_original_sync
+          FROM public.ringba_original_sync
           WHERE ringba_id = ${ringbaId}
           LIMIT 1
         `;
@@ -430,7 +430,7 @@ export const createNeonDbOps = () => {
             id, caller_id, call_timestamp, elocal_payout, category,
             ringba_original_payout, ringba_original_revenue, ringba_id, unmatched,
             adjustment_amount, adjustment_time
-          FROM elocal_call_data
+          FROM public.elocal_call_data
           WHERE caller_id LIKE ${pattern}
           ORDER BY call_timestamp
         `;
@@ -449,7 +449,7 @@ export const createNeonDbOps = () => {
         const result = await sql`
           SELECT id, caller_id, call_timestamp, elocal_payout, category, unmatched,
                  adjustment_amount, adjustment_time
-          FROM elocal_call_data
+          FROM public.elocal_call_data
           WHERE id = ${callId}
         `;
         return (result[0] as DatabaseCallRecord) || null;
@@ -472,7 +472,7 @@ export const createNeonDbOps = () => {
     ): Promise<{ updated: number }> {
       try {
         const result = await sql`
-          UPDATE elocal_call_data
+          UPDATE public.elocal_call_data
           SET
             elocal_payout = ${adjustmentData.elocalPayout ?? 0},
             adjustment_time = ${adjustmentData.adjustmentTime ?? ''},
@@ -501,7 +501,7 @@ export const createNeonDbOps = () => {
     ): Promise<{ updated: number }> {
       try {
         const result = await sql`
-          UPDATE elocal_call_data
+          UPDATE public.elocal_call_data
           SET
             ringba_original_payout = COALESCE(ringba_original_payout, ${originalPayout}),
             ringba_original_revenue = COALESCE(ringba_original_revenue, ${originalRevenue}),
@@ -532,11 +532,11 @@ export const createNeonDbOps = () => {
       for (const call of ringbaCalls) {
         try {
           const existing = await sql`
-            SELECT id FROM ringba_original_sync WHERE ringba_id = ${call.inboundCallId} LIMIT 1
+            SELECT id FROM public.ringba_original_sync WHERE ringba_id = ${call.inboundCallId} LIMIT 1
           `;
           if (existing.length > 0) {
             await sql`
-              UPDATE ringba_original_sync
+              UPDATE public.ringba_original_sync
               SET
                 call_timestamp = ${call.callDt || ''},
                 caller_id = ${call.callerId ?? null},
@@ -553,7 +553,7 @@ export const createNeonDbOps = () => {
             updated++;
           } else {
             await sql`
-              INSERT INTO ringba_original_sync (
+              INSERT INTO public.ringba_original_sync (
                 ringba_id, call_timestamp, caller_id, ringba_payout, ringba_revenue_amount,
                 call_duration, target_id, target_name, campaign_name, publisher_name
               )
@@ -612,7 +612,7 @@ export const createNeonDbOps = () => {
               id, caller_id, call_timestamp as date_of_call, elocal_payout as payout, 
               category, ringba_original_payout as original_payout, 
               ringba_original_revenue as original_revenue, call_duration as total_duration
-            FROM elocal_call_data
+            FROM public.elocal_call_data
             WHERE SUBSTRING(call_timestamp::text, 1, 10) = ANY(${datesInRange})
               AND category = ${category}
             ORDER BY caller_id, call_timestamp
@@ -624,7 +624,7 @@ export const createNeonDbOps = () => {
               id, caller_id, call_timestamp as date_of_call, elocal_payout as payout, 
               category, ringba_original_payout as original_payout, 
               ringba_original_revenue as original_revenue, call_duration as total_duration
-            FROM elocal_call_data
+            FROM public.elocal_call_data
             WHERE SUBSTRING(call_timestamp::text, 1, 10) = ANY(${datesInRange})
             ORDER BY caller_id, call_timestamp
           `;
@@ -637,7 +637,7 @@ export const createNeonDbOps = () => {
     },
 
     /**
-     * Get Ringba calls for cost matching (from ringba_original_sync table)
+     * Get Ringba calls for matching (from ringba_original_sync table)
      * Used by ringba-cost-sync to compare with eLocal payouts
      */
     async getRingbaCallsForMatching(
@@ -669,7 +669,7 @@ export const createNeonDbOps = () => {
             caller_id, caller_id as caller_id_e164,
             ringba_payout as payout_amount, ringba_revenue_amount as revenue_amount, 
             target_id, call_duration
-          FROM ringba_original_sync
+          FROM public.ringba_original_sync
           WHERE SUBSTRING(call_timestamp::text, 1, 10) = ANY(${datesInRange})
           ORDER BY caller_id, call_timestamp
         `;
@@ -697,7 +697,7 @@ export const createNeonDbOps = () => {
         let updated = 0;
         for (const match of matches) {
           const result = await sql`
-            UPDATE elocal_call_data
+            UPDATE public.elocal_call_data
             SET
               ringba_id = ${match.ringbaInboundCallId},
               updated_at = NOW()

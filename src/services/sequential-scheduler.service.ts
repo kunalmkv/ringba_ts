@@ -11,6 +11,7 @@ import type {
 } from '../config/scheduler-config.js';
 import { DEFAULT_SCHEDULER_CONFIG } from '../config/scheduler-config.js';
 import type { DateRange, Category } from '../types/index.js';
+import { getCurrentDayRangeWithTimezone } from '../utils/date-utils.js';
 
 /** Service execution result */
 interface ServiceExecutionResult {
@@ -51,7 +52,7 @@ export class SequentialScheduler {
   private jobStats: Map<string, JobStats>;
   private isRunning: boolean;
   private appConfig: any;
-  
+
   constructor(config?: MasterSchedulerConfig) {
     this.config = config || DEFAULT_SCHEDULER_CONFIG;
     this.tasks = new Map();
@@ -59,7 +60,7 @@ export class SequentialScheduler {
     this.isRunning = false;
     this.appConfig = this.buildAppConfig();
   }
-  
+
   /**
    * Build application config from environment variables
    */
@@ -71,7 +72,7 @@ export class SequentialScheduler {
       ringbaApiToken: process.env.RINGBA_API_TOKEN,
     };
   }
-  
+
   /**
    * Get current IST time string
    */
@@ -88,21 +89,21 @@ export class SequentialScheduler {
       second: '2-digit'
     });
   }
-  
+
   /**
    * Calculate date range for a service
    */
   private calculateDateRange(service: ServiceConfig): DateRange {
     const now = new Date();
-    
+
     // Create clean date objects
     let startDate: Date;
     let endDate: Date;
-    
+
     if (service.currentDayOnly) {
-      // Current day only
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      // Current day only - use timezone aware helper
+      // This handles the IST vs EST issue (before noon IST = previous day)
+      return getCurrentDayRangeWithTimezone();
     } else if (service.daysBack) {
       // Go back N days
       const start = new Date(now);
@@ -111,10 +112,10 @@ export class SequentialScheduler {
       endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     } else {
       // Default: current day
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      // Also use timezone aware helper for default as it's safer
+      return getCurrentDayRangeWithTimezone();
     }
-    
+
     // Format dates - handle invalid dates
     const formatDate = (date: Date): string => {
       if (isNaN(date.getTime())) {
@@ -125,7 +126,7 @@ export class SequentialScheduler {
       const year = date.getFullYear();
       return `${month}/${day}/${year}`;
     };
-    
+
     const formatDateURL = (date: Date): string => {
       if (isNaN(date.getTime())) {
         throw new Error('Invalid date object in formatDateURL');
@@ -135,7 +136,7 @@ export class SequentialScheduler {
       const year = date.getFullYear();
       return `${month}%2F${day}%2F${year}`;
     };
-    
+
     return {
       startDate,
       endDate,
@@ -145,13 +146,13 @@ export class SequentialScheduler {
       endDateURL: formatDateURL(endDate),
     };
   }
-  
+
   /**
    * Execute a single service
    */
   private async executeService(service: ServiceConfig): Promise<ServiceExecutionResult> {
     const startTime = Date.now();
-    
+
     console.log('');
     console.log('─'.repeat(70));
     console.log(`[${this.getISTTime()}] Executing: ${service.name}`);
@@ -159,41 +160,41 @@ export class SequentialScheduler {
     console.log(`Category: ${service.category || 'All'}`);
     console.log(`Description: ${service.description}`);
     console.log('─'.repeat(70));
-    
+
     try {
       // Calculate date range
       const dateRange = this.calculateDateRange(service);
-      
+
       console.log(`Date Range: ${dateRange.startDateFormatted} to ${dateRange.endDateFormatted}`);
       console.log('');
-      
+
       let result: any;
-      
+
       // Execute based on service type
       switch (service.type) {
         case 'elocal-fetch':
           result = await this.executeElocalFetch(dateRange, service.category || null);
           break;
-          
+
         case 'ringba-original-sync':
           result = await this.executeRingbaOriginalSync(dateRange, service.category || null);
           break;
-          
+
         case 'ringba-cost-sync':
           result = await this.executeRingbaCostSync(dateRange, service.category || null);
           break;
-          
+
         default:
           throw new Error(`Unknown service type: ${service.type}`);
       }
-      
+
       const duration = (Date.now() - startTime) / 1000;
-      
+
       console.log('');
       console.log(`✅ SUCCESS: ${service.name}`);
       console.log(`Duration: ${duration.toFixed(2)}s`);
       console.log('─'.repeat(70));
-      
+
       return {
         success: true,
         serviceName: service.name,
@@ -203,13 +204,13 @@ export class SequentialScheduler {
     } catch (error) {
       const duration = (Date.now() - startTime) / 1000;
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       console.error('');
       console.error(`❌ FAILED: ${service.name}`);
       console.error(`Error: ${errorMessage}`);
       console.error(`Duration: ${duration.toFixed(2)}s`);
       console.error('─'.repeat(70));
-      
+
       return {
         success: false,
         serviceName: service.name,
@@ -218,28 +219,28 @@ export class SequentialScheduler {
       };
     }
   }
-  
+
   /**
    * Execute eLocal fetch service
    */
   private async executeElocalFetch(dateRange: DateRange, category: Category | null): Promise<any> {
     // Dynamic import to avoid circular dependencies
     const module = await import('./fetch-elocal-calls.service.js');
-    
+
     // Determine service type based on date range
     // Compare calendar dates (not timestamps with hours)
     const startDateOnly = new Date(dateRange.startDate.getFullYear(), dateRange.startDate.getMonth(), dateRange.startDate.getDate());
     const endDateOnly = new Date(dateRange.endDate.getFullYear(), dateRange.endDate.getMonth(), dateRange.endDate.getDate());
     const daysDiff = Math.abs((endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24));
-    
+
     // If 0-1 days: current, otherwise: historical
     const serviceType = daysDiff <= 1 ? 'current' : 'historical';
     const actualCategory: Category = category || 'STATIC';
-    
+
     // The function is curried: config => dateRange => serviceType => category => async
     return await module.scrapeElocalDataWithDateRange(this.appConfig)(dateRange)(serviceType)(actualCategory)();
   }
-  
+
   /**
    * Execute Ringba Original Sync service
    */
@@ -249,7 +250,7 @@ export class SequentialScheduler {
     // Use the correct export name
     return await module.syncRingbaOriginalPayout(this.appConfig, dateRange, category);
   }
-  
+
   /**
    * Execute Ringba Cost Sync service
    */
@@ -258,14 +259,14 @@ export class SequentialScheduler {
     const { syncCostToRingba } = await import('./ringba-cost-sync.service.js');
     return await syncCostToRingba(this.appConfig, dateRange, category);
   }
-  
+
   /**
    * Execute a schedule (run all services sequentially)
    */
   private async executeSchedule(schedule: ScheduleConfig): Promise<ScheduleExecutionResult> {
     const startTime = Date.now();
     const istTime = this.getISTTime();
-    
+
     console.log('');
     console.log('='.repeat(70));
     console.log(`[${istTime}] SCHEDULE STARTED: ${schedule.name}`);
@@ -274,30 +275,30 @@ export class SequentialScheduler {
     console.log(`Services to run: ${schedule.services.filter(s => s.enabled).length}`);
     console.log(`Execution Mode: SEQUENTIAL (one by one)`);
     console.log('='.repeat(70));
-    
+
     const serviceResults: ServiceExecutionResult[] = [];
     let successCount = 0;
     let failureCount = 0;
-    
+
     // Execute services ONE BY ONE
     const enabledServices = schedule.services.filter(s => s.enabled);
-    
+
     for (let i = 0; i < enabledServices.length; i++) {
       const service = enabledServices[i];
-      
+
       console.log('');
       console.log(`[${i + 1}/${enabledServices.length}] Starting service...`);
-      
+
       // Execute service and wait for completion
       const result = await this.executeService(service);
       serviceResults.push(result);
-      
+
       if (result.success) {
         successCount++;
       } else {
         failureCount++;
       }
-      
+
       // Small delay between services
       if (i < enabledServices.length - 1) {
         console.log('');
@@ -305,9 +306,9 @@ export class SequentialScheduler {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
-    
+
     const totalDuration = (Date.now() - startTime) / 1000;
-    
+
     console.log('');
     console.log('='.repeat(70));
     console.log(`SCHEDULE COMPLETED: ${schedule.name}`);
@@ -318,7 +319,7 @@ export class SequentialScheduler {
     console.log(`Total Duration: ${totalDuration.toFixed(2)}s`);
     console.log('='.repeat(70));
     console.log('');
-    
+
     return {
       success: failureCount === 0,
       scheduleName: schedule.name,
@@ -328,7 +329,7 @@ export class SequentialScheduler {
       failureCount
     };
   }
-  
+
   /**
    * Schedule a job
    */
@@ -342,7 +343,7 @@ export class SequentialScheduler {
       lastResult: null,
       averageDuration: 0
     });
-    
+
     // Create cron task
     const task = cron.schedule(
       schedule.cron,
@@ -350,16 +351,16 @@ export class SequentialScheduler {
         const stats = this.jobStats.get(schedule.name)!;
         stats.totalRuns++;
         stats.lastRun = new Date().toISOString();
-        
+
         const result = await this.executeSchedule(schedule);
-        
+
         stats.lastResult = result;
         if (result.success) {
           stats.successfulRuns++;
         } else {
           stats.failedRuns++;
         }
-        
+
         // Update average duration
         const prevAvg = stats.averageDuration;
         const prevCount = stats.totalRuns - 1;
@@ -370,16 +371,16 @@ export class SequentialScheduler {
         timezone: schedule.timezone
       }
     );
-    
+
     this.tasks.set(schedule.name, task);
-    
+
     console.log(`✅ SCHEDULED: ${schedule.name}`);
     console.log(`   Cron: ${schedule.cron}`);
     console.log(`   Time: ${schedule.time} ${schedule.timezone}`);
     console.log(`   Services: ${schedule.services.filter(s => s.enabled).length}`);
     console.log('');
   }
-  
+
   /**
    * Initialize scheduler
    */
@@ -394,26 +395,26 @@ export class SequentialScheduler {
     console.log(`Total Schedules: ${this.config.schedules.filter(s => s.enabled).length}`);
     console.log('='.repeat(70));
     console.log('');
-    
+
     // Validate required config
     const requiredVars = [
       'NEON_DATABASE_URL',
       'RINGBA_ACCOUNT_ID',
       'RINGBA_API_TOKEN',
     ];
-    
+
     const missingVars = requiredVars.filter(env => !process.env[env]);
-    
+
     if (missingVars.length > 0) {
       console.error('[ERROR] Missing required environment variables:');
       missingVars.forEach(env => console.error(`  - ${env}`));
       throw new Error('Missing required environment variables');
     }
-    
+
     console.log('[INFO] All required environment variables are configured');
     console.log('');
   }
-  
+
   /**
    * Start the scheduler
    */
@@ -422,26 +423,26 @@ export class SequentialScheduler {
       console.warn('[WARN] Scheduler is already running');
       return;
     }
-    
+
     await this.initialize();
-    
+
     // Schedule all enabled schedules
     const enabledSchedules = this.config.schedules.filter(s => s.enabled);
-    
+
     console.log('Scheduling jobs...');
     console.log('');
-    
+
     enabledSchedules.forEach(schedule => {
       this.scheduleJob(schedule);
     });
-    
+
     // Start all tasks
     this.tasks.forEach((task) => {
       task.start();
     });
-    
+
     this.isRunning = true;
-    
+
     console.log('='.repeat(70));
     console.log('✅ Scheduler Started Successfully!');
     console.log('='.repeat(70));
@@ -449,20 +450,20 @@ export class SequentialScheduler {
     console.log(`Current Time (${this.config.timezone}): ${this.getISTTime()}`);
     console.log('='.repeat(70));
     console.log('');
-    
+
     this.displaySchedules();
-    
+
     console.log('[INFO] Scheduler is running. Press Ctrl+C to stop.');
     console.log('');
   }
-  
+
   /**
    * Display all schedules
    */
   displaySchedules(): void {
     console.log('Scheduled Jobs:');
     console.log('─'.repeat(70));
-    
+
     this.config.schedules.filter(s => s.enabled).forEach((schedule, index) => {
       const stats = this.jobStats.get(schedule.name);
       const serviceCount = schedule.services.filter(s => s.enabled).length;
@@ -472,11 +473,11 @@ export class SequentialScheduler {
       console.log(`   Runs: ${stats?.totalRuns || 0}`);
       console.log('');
     });
-    
+
     console.log('─'.repeat(70));
     console.log('');
   }
-  
+
   /**
    * Stop the scheduler
    */
@@ -485,46 +486,46 @@ export class SequentialScheduler {
       console.warn('[WARN] Scheduler is not running');
       return;
     }
-    
+
     console.log('[INFO] Stopping scheduler...');
-    
+
     this.tasks.forEach((task) => {
       task.stop();
     });
-    
+
     this.isRunning = false;
     console.log('[INFO] Scheduler stopped');
   }
-  
+
   /**
    * Get statistics
    */
   getStats(): Record<string, JobStats> {
     const stats: Record<string, JobStats> = {};
-    
+
     this.jobStats.forEach((jobStats, name) => {
       stats[name] = {
         ...jobStats,
       };
     });
-    
+
     return stats;
   }
-  
+
   /**
    * Run a schedule immediately (for testing)
    */
   async runScheduleNow(scheduleName: string): Promise<ScheduleExecutionResult> {
     const schedule = this.config.schedules.find(s => s.name === scheduleName);
-    
+
     if (!schedule) {
       throw new Error(`Schedule not found: ${scheduleName}`);
     }
-    
+
     if (!schedule.enabled) {
       throw new Error(`Schedule is disabled: ${scheduleName}`);
     }
-    
+
     return await this.executeSchedule(schedule);
   }
 }

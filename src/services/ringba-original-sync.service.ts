@@ -343,7 +343,7 @@ export async function syncRingbaOriginalPayout(
   rangeStart.setHours(0, 0, 0, 0);
   const rangeEnd = new Date(dateRange.endDate);
   rangeEnd.setHours(0, 0, 0, 0);
-  
+
 
   const fullRangeStartUTC = new Date(
     Date.UTC(
@@ -413,13 +413,13 @@ export async function syncRingbaOriginalPayout(
       ? matchAndPrepareUpdates(ringbaCalls, elocalCalls)
       : { updates: [] as PrepareUpdatesResult['updates'], unmatched: 0, skipped: 0 };
 
-  const matchedElocalCount = updates.length + skipped;
+  const matchedElocalCount = updates.length;
   const unmatchedElocalCount = elocalCalls.length - matchedElocalCount;
 
   console.log(`[Step 4] Matching Results:`);
-  console.log(`  - Ringba calls to update: ${updates.length}`);
+  console.log(`  - Ringba calls matched/updating: ${updates.length}`);
   console.log(`  - Ringba calls unmatched: ${unmatched} (of ${ringbaCalls.length})`);
-  console.log(`  - Ringba calls skipped (already synced): ${skipped}`);
+  console.log(`  - Ringba calls with existing data (updated ID only): ${skipped}`);
   console.log(`  - eLocal calls matched: ${matchedElocalCount} (of ${elocalCalls.length})`);
   console.log(`  - eLocal calls unmatched: ${unmatchedElocalCount}`);
 

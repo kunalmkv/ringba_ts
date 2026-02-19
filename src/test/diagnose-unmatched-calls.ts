@@ -23,7 +23,7 @@ async function main() {
       COUNT(ringba_id) as has_ringba_id,
       COUNT(*) - COUNT(ringba_id) as null_ringba_id,
       COUNT(CASE WHEN ringba_original_payout IS NOT NULL AND ringba_original_payout != 0 THEN 1 END) as has_original_payout
-    FROM elocal_call_data
+    FROM public.elocal_call_data
   `;
   console.log('  Total eLocal calls:', overallStats[0].total_elocal_calls);
   console.log('  Has ringba_id:', overallStats[0].has_ringba_id);
@@ -38,7 +38,7 @@ async function main() {
       MIN(SUBSTRING(call_timestamp, 1, 10)) as earliest_date,
       MAX(SUBSTRING(call_timestamp, 1, 10)) as latest_date,
       COUNT(DISTINCT SUBSTRING(call_timestamp, 1, 10)) as distinct_days
-    FROM elocal_call_data
+    FROM public.elocal_call_data
   `;
   console.log('  Earliest:', elocalDateRange[0].earliest_date);
   console.log('  Latest:', elocalDateRange[0].latest_date);
@@ -53,7 +53,7 @@ async function main() {
       MAX(SUBSTRING(call_timestamp, 1, 10)) as latest_date,
       COUNT(DISTINCT SUBSTRING(call_timestamp, 1, 10)) as distinct_days,
       COUNT(*) as total_ringba_calls
-    FROM ringba_original_sync
+    FROM public.ringba_original_sync
   `;
   console.log('  Earliest:', ringbaDateRange[0].earliest_date);
   console.log('  Latest:', ringbaDateRange[0].latest_date);
@@ -70,7 +70,7 @@ async function main() {
       COUNT(ringba_id) as matched_calls,
       COUNT(*) - COUNT(ringba_id) as unmatched_calls,
       category
-    FROM elocal_call_data
+    FROM public.elocal_call_data
     GROUP BY SUBSTRING(call_timestamp, 1, 10), category
     ORDER BY SUBSTRING(call_timestamp, 1, 10) DESC, category
     LIMIT 20
