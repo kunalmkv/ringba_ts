@@ -108,7 +108,7 @@ export const scrapeElocalDataWithDateRange =
 
           console.log('[INFO] Saving data to database...');
           console.log(`[INFO] ${category} category: Using eLocal data only (no Ringba lookups)`);
-          console.log(`[INFO] Note: eLocal dates are saved as-is (no timezone conversion)`);
+          console.log(`[INFO] Note: eLocal timestamps (EST) are converted to UTC before saving`);
 
           if (includeAdjustments && processedAdjustments.length > 0) {
             try {

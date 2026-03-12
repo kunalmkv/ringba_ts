@@ -112,158 +112,148 @@ export const createNeonDbOps = () => {
     },
 
     /**
-     * Insert or update campaign calls in batch
+     * Insert or update eLocal campaign calls in batch.
+     * Timestamps from eLocal API are in EST — we convert to UTC (+5h standard / +4h DST)
+     * so they align with existing UTC data in ringba_call_data.
+     * Uses ON CONFLICT (caller_id, call_timestamp, category) UPSERT:
+     *   - If a row already exists (e.g. from a CSV import), we fill in the eLocal-specific
+     *     columns without overwriting downstream data (ringba_id, ringba_original_payout, etc.)
      */
     async insertCallsBatch(calls: ElocalCall[]): Promise<InsertResult> {
       if (!calls || calls.length === 0) {
         return { inserted: 0, updated: 0 };
       }
 
+      /**
+       * Convert an eLocal EST timestamp string to a UTC ISO string.
+       * eLocal returns timestamps like "2026-03-11T12:30:28" (no tz suffix) in EST.
+       * EST = UTC-5  (standard time, Nov–Mar)
+       * EDT = UTC-4  (daylight saving, Mar–Nov)
+       * We detect DST by checking if the date falls in the DST window for the US Eastern zone.
+       */
+      const estToUtc = (estStr: string | null | undefined): string | null => {
+        if (!estStr) return null;
+        // Only convert bare ISO strings (no tz offset already present)
+        const match = estStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+        if (!match) return estStr; // already has offset or different format — leave as-is
+
+        const [, yr, mo, dy, hr, mn, sc] = match.map(Number);
+        // Determine EST vs EDT offset.
+        // DST in the US: second Sunday in March to first Sunday in November.
+        // Simple but accurate check: create Date at UTC and see if it falls in DST window.
+        const utcGuess = new Date(Date.UTC(yr, mo - 1, dy, hr, mn, sc));
+        // Eastern Time: isDST when UTC offset is -4 (EDT). We check via Intl API.
+        const easternOffset = (() => {
+          try {
+            // Get Eastern offset in minutes at the guessed UTC time
+            const parts = new Intl.DateTimeFormat('en-US', {
+              timeZone: 'America/New_York',
+              timeZoneName: 'shortOffset',
+            }).formatToParts(utcGuess);
+            const tzPart = parts.find(p => p.type === 'timeZoneName');
+            // e.g. "GMT-4" or "GMT-5"
+            const offsetHrs = tzPart ? parseInt(tzPart.value.replace('GMT', '') || '-5', 10) : -5;
+            return offsetHrs; // negative means behind UTC
+          } catch {
+            return -5; // fallback to EST
+          }
+        })();
+
+        // Shift to UTC: subtract the eastern offset (which is negative, so add abs)
+        const utcMs = Date.UTC(yr, mo - 1, dy, hr - easternOffset, mn, sc);
+        return new Date(utcMs).toISOString().replace('Z', ''); // store without Z for Postgres TIMESTAMP WITHOUT TIME ZONE
+      };
+
       try {
         let inserted = 0;
         let updated = 0;
-        let timestampCorrected = 0;
-        let skippedDuplicates = 0;
 
-        // Process calls one by one (Neon doesn't support traditional transactions)
         for (const call of calls) {
-          // Normalize caller ID to E.164 to prevent duplicate formats
           const normalizedCallerId = toE164(call.callerId) || call.callerId;
-
-          const lookupTimestamp = call.originalDateOfCall || call.dateOfCall;
-          let correctedTimestamp = call.dateOfCall;
-          let isTimestampCorrection = !!(
-            call.originalDateOfCall &&
-            call.originalDateOfCall !== call.dateOfCall
-          );
-
-          // If this is a timestamp correction, check if the corrected timestamp would cause a duplicate
-          if (isTimestampCorrection) {
-            const duplicateCheck = await sql`
-              SELECT id FROM public.ringba_call_data
-              WHERE caller_id = ${normalizedCallerId}
-                AND call_timestamp = ${correctedTimestamp}
-                AND category = ${call.category || 'STATIC'}
-              LIMIT 1
-            `;
-
-            if (duplicateCheck.length > 0) {
-              console.log(
-                `[DB SKIP] Timestamp correction would cause duplicate for caller ${normalizedCallerId.substring(0, 10)}...`
-              );
-              correctedTimestamp = lookupTimestamp;
-              isTimestampCorrection = false;
-              skippedDuplicates++;
-            }
+          // Convert eLocal EST timestamp to UTC
+          const utcTimestamp = estToUtc(call.dateOfCall);
+          if (!utcTimestamp || !normalizedCallerId) {
+            console.warn(`[DB SKIP] Missing caller_id or timestamp for call: ${call.callerId}`);
+            continue;
           }
 
-          // Check if call exists
-          const existingCall = await sql`
+          const category = call.category || 'STATIC';
+
+          // Fuzzy match: Look for an existing call from this caller within ±10 minutes
+          const existing = await sql`
             SELECT id FROM public.ringba_call_data
             WHERE caller_id = ${normalizedCallerId}
-              AND call_timestamp = ${lookupTimestamp || ''}
-              AND category = ${call.category || 'STATIC'}
+              AND call_timestamp >= ${utcTimestamp}::timestamp - interval '10 minutes'
+              AND call_timestamp <= ${utcTimestamp}::timestamp + interval '10 minutes'
             LIMIT 1
           `;
 
-          if (existingCall.length > 0) {
-            // Update existing call
+          if (existing.length > 0) {
+            // Update the existing fuzzy-matched call
             await sql`
               UPDATE public.ringba_call_data
               SET
-                call_timestamp = ${correctedTimestamp},
-                elocal_payout = ${call.elocalPayout ?? 0},
-                category = ${call.category || 'STATIC'},
-                
-                call_duration = ${call.totalDuration || null},
-                adjustment_time = ${call.adjustmentTime ?? ''},
-                adjustment_amount = ${call.adjustmentAmount ?? 0},
-                unmatched = ${call.unmatched || false},
-                ringba_id = ${call.ringbaInboundCallId || null},
-                ringba_original_payout = ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null},
-                ringba_revenue = ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null},
-                updated_at = NOW()
-              WHERE caller_id = ${normalizedCallerId}
-                AND call_timestamp = ${lookupTimestamp || ''}
-                AND category = ${call.category || 'STATIC'}
+                category            = ${category},
+                elocal_payout       = ${call.elocalPayout ?? 0},
+                call_duration       = COALESCE(public.ringba_call_data.call_duration, ${call.totalDuration || null}),
+                adjustment_time     = COALESCE(${call.adjustmentTime || null}, public.ringba_call_data.adjustment_time),
+                adjustment_amount   = COALESCE(${call.adjustmentAmount ?? 0}, public.ringba_call_data.adjustment_amount),
+                unmatched           = ${call.unmatched || false},
+                ringba_id           = COALESCE(public.ringba_call_data.ringba_id, ${call.ringbaInboundCallId || null}),
+                ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null}),
+                ringba_revenue      = COALESCE(public.ringba_call_data.ringba_revenue, ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null}),
+                updated_at          = NOW()
+              WHERE id = ${existing[0].id}
             `;
             updated++;
-
-            if (isTimestampCorrection) {
-              timestampCorrected++;
-            }
           } else {
-            // Check if a record with the corrected timestamp already exists
-            const existsWithCorrectedTimestamp = await sql`
-              SELECT id FROM public.ringba_call_data
-              WHERE caller_id = ${normalizedCallerId}
-                AND call_timestamp = ${correctedTimestamp}
-                AND category = ${call.category || 'STATIC'}
-              LIMIT 1
+            // No fuzzy match found, insert new (with ON CONFLICT fallback for exact matches)
+            const result = await sql`
+              INSERT INTO public.ringba_call_data (
+                caller_id, call_timestamp, category,
+                elocal_payout, call_duration,
+                adjustment_time, adjustment_amount, unmatched,
+                ringba_id, ringba_original_payout, ringba_revenue,
+                created_at, updated_at
+              )
+              VALUES (
+                ${normalizedCallerId},
+                ${utcTimestamp},
+                ${category},
+                ${call.elocalPayout ?? 0},
+                ${call.totalDuration || null},
+                ${call.adjustmentTime || null},
+                ${call.adjustmentAmount ?? 0},
+                ${call.unmatched || false},
+                ${call.ringbaInboundCallId || null},
+                ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null},
+                ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null},
+                NOW(), NOW()
+              )
+              ON CONFLICT (caller_id, call_timestamp)
+              DO UPDATE SET
+                category            = EXCLUDED.category,
+                elocal_payout       = EXCLUDED.elocal_payout,
+                call_duration       = COALESCE(public.ringba_call_data.call_duration, EXCLUDED.call_duration),
+                adjustment_time     = COALESCE(EXCLUDED.adjustment_time, public.ringba_call_data.adjustment_time),
+                adjustment_amount   = COALESCE(EXCLUDED.adjustment_amount, public.ringba_call_data.adjustment_amount),
+                unmatched           = EXCLUDED.unmatched,
+                ringba_id           = COALESCE(public.ringba_call_data.ringba_id, EXCLUDED.ringba_id),
+                ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, EXCLUDED.ringba_original_payout),
+                ringba_revenue      = COALESCE(public.ringba_call_data.ringba_revenue, EXCLUDED.ringba_revenue),
+                updated_at          = NOW()
+              RETURNING (xmax = 0) AS was_inserted
             `;
-
-            if (existsWithCorrectedTimestamp.length > 0) {
-              // Update the existing record
-              await sql`
-                UPDATE public.ringba_call_data
-                SET
-                  elocal_payout = ${call.elocalPayout ?? 0},
-                  
-                  call_duration = ${call.totalDuration || null},
-                  adjustment_time = ${call.adjustmentTime ?? ''},
-                  adjustment_amount = ${call.adjustmentAmount ?? 0},
-                  unmatched = ${call.unmatched || false},
-                  ringba_id = ${call.ringbaInboundCallId || null},
-                  ringba_original_payout = ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null},
-                  ringba_revenue = ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null},
-                  updated_at = NOW()
-                WHERE caller_id = ${normalizedCallerId}
-                  AND call_timestamp = ${correctedTimestamp}
-                  AND category = ${call.category || 'STATIC'}
-              `;
-              updated++;
-            } else {
-              // Insert new call
-              await sql`
-                INSERT INTO public.ringba_call_data (
-                  caller_id, call_timestamp, elocal_payout, category,
-                  call_duration,
-                  adjustment_time, adjustment_amount, unmatched, ringba_id,
-                  ringba_original_payout, ringba_revenue, created_at
-                )
-                VALUES (
-                  ${normalizedCallerId},
-                  ${correctedTimestamp},
-                  ${call.elocalPayout ?? 0},
-                  ${call.category || 'STATIC'},
-                  
-                  ${call.totalDuration || null},
-                  ${call.adjustmentTime ?? ''},
-                  ${call.adjustmentAmount ?? 0},
-                  ${call.unmatched || false},
-                  ${call.ringbaInboundCallId || null},
-                  ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null},
-                  ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null},
-                  NOW()
-                )
-              `;
-              inserted++;
+  
+            if (result.length > 0) {
+              if ((result[0] as any).was_inserted) inserted++;
+              else updated++;
             }
           }
         }
 
-        if (timestampCorrected > 0) {
-          console.log(
-            `[DB] Timestamp corrections applied to ${timestampCorrected} existing records`
-          );
-        }
-        if (skippedDuplicates > 0) {
-          console.log(
-            `[DB] Skipped ${skippedDuplicates} timestamp corrections (would cause duplicates)`
-          );
-        }
-
-        return { inserted, updated, skippedDuplicates };
+        console.log(`[DB] UPSERT complete: ${inserted} inserted, ${updated} updated (matched existing rows)`);
+        return { inserted, updated };
       } catch (error) {
         console.error('[ERROR] Failed to insert/update calls batch:', error);
         throw error;
@@ -331,7 +321,9 @@ export const createNeonDbOps = () => {
     },
 
     /**
-     * Get calls from database for a date range
+     * Get calls from database for a date range.
+     * Boundaries use UTC dates since call_timestamp is stored in UTC.
+     * We cast to DATE and compare directly — no string slicing.
      */
     async getCallsForDateRange(
       startDate: Date,
@@ -339,26 +331,10 @@ export const createNeonDbOps = () => {
       category: Category | null = null
     ): Promise<DatabaseCallRecord[]> {
       try {
-        // Use UTC so calendar dates match the sync's intended day (e.g. Feb 3 05:00 UTC = Feb 3 EST)
-        const formatDateUTC = (date: Date): string => {
-          const year = date.getUTCFullYear();
-          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-          const day = String(date.getUTCDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
-        };
-
-        const datesInRange: string[] = [];
-        const current = new Date(startDate);
-        const end = new Date(endDate);
-        // Include one UTC day before and after so boundary calls (e.g. eLocal stored in Eastern)
-        // are not missed when sync uses UTC date boundaries.
-        current.setUTCDate(current.getUTCDate() - 1);
-        end.setUTCDate(end.getUTCDate() + 1);
-
-        while (current <= end) {
-          datesInRange.push(formatDateUTC(new Date(current)));
-          current.setUTCDate(current.getUTCDate() + 1);
-        }
+        // Build UTC date strings (YYYY-MM-DD) for the full range, with ±1 day buffer
+        // to catch calls near midnight that might shift a day when converting EST→UTC.
+        const startStr = new Date(startDate.getTime() - 86_400_000).toISOString().slice(0, 10);
+        const endStr   = new Date(endDate.getTime()   + 86_400_000).toISOString().slice(0, 10);
 
         let result;
         if (category) {
@@ -368,7 +344,7 @@ export const createNeonDbOps = () => {
               ringba_original_payout, ringba_revenue, ringba_id, unmatched,
               adjustment_amount, adjustment_time
             FROM public.ringba_call_data
-            WHERE SUBSTRING(call_timestamp, 1, 10) = ANY(${datesInRange})
+            WHERE DATE(call_timestamp) BETWEEN ${startStr}::date AND ${endStr}::date
               AND category = ${category}
             ORDER BY caller_id, call_timestamp
           `;
@@ -379,7 +355,7 @@ export const createNeonDbOps = () => {
               ringba_original_payout, ringba_revenue, ringba_id, unmatched,
               adjustment_amount, adjustment_time
             FROM public.ringba_call_data
-            WHERE SUBSTRING(call_timestamp, 1, 10) = ANY(${datesInRange})
+            WHERE DATE(call_timestamp) BETWEEN ${startStr}::date AND ${endStr}::date
             ORDER BY caller_id, call_timestamp
           `;
         }
@@ -472,7 +448,7 @@ export const createNeonDbOps = () => {
           UPDATE public.ringba_call_data
           SET
             elocal_payout = ${adjustmentData.elocalPayout ?? 0},
-            adjustment_time = ${adjustmentData.adjustmentTime ?? ''},
+            adjustment_time = ${adjustmentData.adjustmentTime || null},
             adjustment_amount = ${adjustmentData.adjustmentAmount ?? 0},
             unmatched = ${false},
             updated_at = NOW()
@@ -505,6 +481,10 @@ export const createNeonDbOps = () => {
             ringba_id = COALESCE(ringba_id, ${ringbaInboundCallId}),
             updated_at = NOW()
           WHERE id = ${callId}
+            AND NOT EXISTS (
+              SELECT 1 FROM public.ringba_call_data 
+              WHERE ringba_id = ${ringbaInboundCallId} AND id != ${callId}
+            )
           RETURNING id
         `;
         return { updated: result.length };
@@ -578,8 +558,8 @@ export const createNeonDbOps = () => {
     },
 
     /**
-     * Get eLocal calls for cost sync (from elocal_call_data table)
-     * Used by ringba-cost-sync to match and update Ringba payouts
+     * Get eLocal calls for cost sync (from ringba_call_data table)
+     * Uses DATE() BETWEEN so UTC-stored timestamps are correctly compared.
      */
     async getElocalCallsForSync(
       startDate: Date,
@@ -587,21 +567,9 @@ export const createNeonDbOps = () => {
       category: Category | null = null
     ): Promise<any[]> {
       try {
-        const formatDate = (date: Date): string => {
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
-        };
-
-        const datesInRange: string[] = [];
-        const current = new Date(startDate);
-        const end = new Date(endDate);
-
-        while (current <= end) {
-          datesInRange.push(formatDate(new Date(current)));
-          current.setDate(current.getDate() + 1);
-        }
+        // Buffer ±1 day to catch cross-midnight boundary calls.
+        const startStr = new Date(startDate.getTime() - 86_400_000).toISOString().slice(0, 10);
+        const endStr   = new Date(endDate.getTime()   + 86_400_000).toISOString().slice(0, 10);
 
         if (category) {
           const result = await sql`
@@ -610,7 +578,7 @@ export const createNeonDbOps = () => {
               category, ringba_original_payout as original_payout, 
               ringba_revenue as original_revenue, call_duration as total_duration
             FROM public.ringba_call_data
-            WHERE SUBSTRING(call_timestamp::text, 1, 10) = ANY(${datesInRange})
+            WHERE DATE(call_timestamp) BETWEEN ${startStr}::date AND ${endStr}::date
               AND category = ${category}
             ORDER BY caller_id, call_timestamp
           `;
@@ -622,7 +590,7 @@ export const createNeonDbOps = () => {
               category, ringba_original_payout as original_payout, 
               ringba_revenue as original_revenue, call_duration as total_duration
             FROM public.ringba_call_data
-            WHERE SUBSTRING(call_timestamp::text, 1, 10) = ANY(${datesInRange})
+            WHERE DATE(call_timestamp) BETWEEN ${startStr}::date AND ${endStr}::date
             ORDER BY caller_id, call_timestamp
           `;
           return result as any[];
