@@ -1,7 +1,7 @@
 /**
  * Ringba Original Payout/Revenue Sync Service (TypeScript).
  * Fetches calls from Ringba for a date range, saves to ringba_original_sync (ringba_id, ringba_payout, etc.),
- * matches with eLocal calls and updates ringba_original_payout/ringba_original_revenue.
+ * matches with eLocal calls and updates ringba_original_payout/ringba_revenue.
  */
 import { createNeonDbOps } from '../database/neon-operations.js';
 import { convertRingbaDateToEST } from '../utils/date-normalizer.js';
@@ -306,7 +306,7 @@ function matchAndPrepareUpdates(
 
     // Check if original_payout or original_revenue already exist (preserve original Ringba data)
     const existingOriginalPayout = Number(bestMatch.elocalCall.ringba_original_payout ?? 0);
-    const existingOriginalRevenue = Number(bestMatch.elocalCall.ringba_original_revenue ?? 0);
+    const existingOriginalRevenue = Number(bestMatch.elocalCall.ringba_revenue ?? 0);
     const hasExistingData = existingOriginalPayout !== 0 || existingOriginalRevenue !== 0;
 
     // Always update if we have a match - but for rows with existing payout/revenue,
@@ -424,7 +424,7 @@ export async function syncRingbaOriginalPayout(
   console.log(`  - eLocal calls unmatched: ${unmatchedElocalCount}`);
 
   if (updates.length > 0) {
-    console.log('[Step 5] Updating ringba_original_payout and ringba_original_revenue...');
+    console.log('[Step 5] Updating ringba_original_payout and ringba_revenue...');
     for (let i = 0; i < updates.length; i++) {
       const u = updates[i];
       try {

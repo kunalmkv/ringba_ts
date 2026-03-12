@@ -169,7 +169,7 @@ function matchCallWithReason(
   }
 
   const existingPayout = Number(elocalCall.ringba_original_payout ?? 0);
-  const existingRevenue = Number(elocalCall.ringba_original_revenue ?? 0);
+  const existingRevenue = Number(elocalCall.ringba_revenue ?? 0);
   const skippedPreserved = existingPayout !== 0 || existingRevenue !== 0;
 
   return {

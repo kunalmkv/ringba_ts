@@ -121,7 +121,7 @@ export interface DatabaseCallRecord {
   category: string;
   ringba_id?: string | null;
   ringba_original_payout?: string | number | null;
-  ringba_original_revenue?: string | number | null;
+  ringba_revenue?: string | number | null;
   unmatched?: boolean;
   adjustment_amount?: string | number | null;
   adjustment_time?: string | null;

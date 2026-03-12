@@ -1,0 +1,23 @@
+[
+  {
+    "id": "2705",
+    "caller_id": "+13468973075",
+    "ringba_id": "RGB2D54AC8A856B9741F58E966ACE99C3E967D8353DV3WFW01",
+    "campaignName": "Appliance Repair",
+    "publisherName": "Appliance Repair Quote",
+    "targetName": "Elocal - Appliance repair - Static Line",
+    "call_duration": "96",
+    "call_timestamp": "2026-01-08T10:19:39.000Z",
+    "recordingUrl": "https://media.ringba.com/recording-public?v=v1&k=EphHtSSwhbyIyhM01IH4LDh%2bLgf6f%2flwvybTAwxTwfDTZZS8ZcnbEJZsgswUNy8VRYuCE%2fBylandu6x%2fKI6%2fPBU4BiCvCjQ%2fpnRajzwYcoWVUQTfJEfanS%2bkhME%2bSi8BqD51jppzsjHzVTdj3YgXck%2b%2bMqxkGAViRHd5n1VM88S%2f0AyV4cjhvDy%2bPxijEKnv7ZO25PGo2%2bqaUHTyEl1GGnSsyHXwE5w186xL8LZbIdpul1NFZFs%2b6IHX7ZGu0nrX7upT4ecXFDbKVZIGAwps3A6LZZw%3d",
+    "transcript": "00:00 A - Corded. Please enter the zip code where you need appliance repair. Please hold to be connected.,\n00:55 B - Hello? Hello, this is Kevin from Mega Appliances. How can I help? Megan, Appliances. This not repair, like collusion repair. Sorry. You guys don't do, like, collusion repair, like the sprayers on hoods and stuff?,\n01:19 A - Ben?,\n01:21 B - Yeah, so, yeah, we do repair. So what's the unit? Huh? Yeah, we do the repairs. What's the units?,\n",
+    "firstName": null,
+    "lastName": null,
+    "email": null,
+    "city": "",
+    "state": "",
+    "ringbaCost": "0.00",
+    "adCost": "0",
+    "created_at": "2026-02-15T04:53:37.031Z",
+    "updated_at": "2026-02-26T01:56:31.570Z"
+  }
+]
