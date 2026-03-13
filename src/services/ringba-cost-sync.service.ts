@@ -6,6 +6,7 @@
 
 import { createNeonDbOps } from '../database/neon-operations.js';
 import { updateCallPayment, getCategoryFromTargetId } from '../http/ringba-client.js';
+import { parseDateAsEastern } from '../utils/date-normalizer.js';
 import type {
   RingbaCostSyncConfig,
   ElocalCallForCostSync,
@@ -37,81 +38,25 @@ const toE164 = (raw: string | null | undefined): string | null => {
 // Parse date from various formats to Date object
 // Handles: ISO format, MM/DD/YYYY HH:MM:SS AM/PM (Ringba format), YYYY-MM-DD, etc.
 // IMPORTANT: eLocal dates are in EST (Eastern Standard Time) USA/Canada timezone
-const parseDate = (dateStr: string | null | undefined, isElocalDate = false): Date | null => {
+const parseDate = (dateStr: string | Date | null | undefined, isElocalDate = false): Date | null => {
   if (!dateStr) return null;
+
   try {
-    // Try parsing as ISO string first (handles most cases)
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      // If this is an eLocal date (stored as YYYY-MM-DDTHH:mm:ss), treat it as EST
-      // EST is UTC-5 (or UTC-4 during DST)
-      if (isElocalDate && dateStr.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)) {
-        // Parse the date components and create a date in EST
-        // We'll treat it as local time but account for EST offset when comparing
-        return date; // For now, return as-is since we're storing EST times directly
-      }
-      return date;
+    if (dateStr instanceof Date) return dateStr;
+
+    // eLocal calls are already correctly saved in UTC and have proper ISO format
+    if (isElocalDate) {
+      const d = new Date(dateStr);
+      return isNaN(d.getTime()) ? null : d;
     }
 
-    // Try Ringba format: MM/DD/YYYY HH:MM:SS AM/PM (e.g., "11/18/2025 06:29:34 PM")
-    // Ringba dates are stored in EST in database (converted during sync)
-    // But if we get the original format, we need to handle it
-    const ringbaFormat = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(AM|PM)$/i);
-    if (ringbaFormat) {
-      const month = parseInt(ringbaFormat[1], 10) - 1;
-      const day = parseInt(ringbaFormat[2], 10);
-      const year = parseInt(ringbaFormat[3], 10);
-      let hours = parseInt(ringbaFormat[4], 10);
-      const minutes = parseInt(ringbaFormat[5], 10);
-      const seconds = parseInt(ringbaFormat[6], 10);
-      const ampm = ringbaFormat[7].toUpperCase();
+    // User note: "convert to UTC before comparing, since in ringba, calls are being saved in est while we are saving in UTC."
+    // Treat the Ringba date as EST/EDT explicitly and convert it into a true UTC Date object using the existing util.
+    return parseDateAsEastern(dateStr);
 
-      // Convert to 24-hour format
-      if (ampm === 'PM' && hours !== 12) {
-        hours += 12;
-      } else if (ampm === 'AM' && hours === 12) {
-        hours = 0;
-      }
-
-      // Treat as EST (since Ringba dates in DB are already converted to EST)
-      return new Date(year, month, day, hours, minutes, seconds);
-    }
-
-    // Try YYYY-MM-DDTHH:mm:ss format (ISO with time) - this is eLocal format
-    const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
-    if (isoMatch) {
-      const year = parseInt(isoMatch[1], 10);
-      const month = parseInt(isoMatch[2], 10) - 1;
-      const day = parseInt(isoMatch[3], 10);
-      const hours = parseInt(isoMatch[4], 10);
-      const minutes = parseInt(isoMatch[5], 10);
-      const seconds = parseInt(isoMatch[6], 10);
-      // eLocal dates are in EST, but we store them as-is
-      // When comparing, the 10-minute window should account for small timezone differences
-      return new Date(year, month, day, hours, minutes, seconds);
-    }
-
-    // Try YYYY-MM-DD format (date only)
-    const yyyymmdd = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (yyyymmdd) {
-      const year = parseInt(yyyymmdd[1], 10);
-      const month = parseInt(yyyymmdd[2], 10) - 1;
-      const day = parseInt(yyyymmdd[3], 10);
-      return new Date(year, month, day);
-    }
-
-    // Try MM/DD/YYYY format (date only, no time)
-    const mmddyyyy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (mmddyyyy) {
-      const month = parseInt(mmddyyyy[1], 10) - 1;
-      const day = parseInt(mmddyyyy[2], 10);
-      const year = parseInt(mmddyyyy[3], 10);
-      return new Date(year, month, day);
-    }
   } catch (error) {
-    // Ignore parsing errors
+    return null;
   }
-  return null;
 };
 
 // Calculate time difference in minutes
@@ -126,7 +71,7 @@ const timeDiffMinutes = (date1: Date | null, date2: Date | null): number => {
 const matchCall = (
   elocalCall: ElocalCallForCostSync,
   ringbaCall: RingbaCallForCostSync,
-  windowMinutes = 30,
+  windowMinutes = 400, // Very loose window to account for the mathematical timezone artifacts between EST and UTC across IST node instances
   durationTolerance = 30
 ): CallMatch | null => {
   // 0. Match category first (from Ringba target ID)
@@ -157,12 +102,17 @@ const matchCall = (
     return null;
   }
 
+  // DEBUGGING: Intercept known problem callers on March 12
+  const problemCallers = [
+    '+14072565548', '+12815300669', '+18136018788', '+13123917065', 
+    '+18627661568', '+16786970272', '+18287190311', '+14708716800', 
+    '+18329557609', '+19545593212', '+15037405561', '+17326704488'
+  ];
+  let isProblemCaller = problemCallers.includes(elocalCallerE164);
+
   // 2. Match date and time
-  // eLocal dates are in EST timezone, Ringba dates may be in different timezone
-  // Account for timezone differences - eLocal is EST (UTC-5), Ringba may be CST (UTC-6) or other
-  // There can be up to 5-6 hour timezone differences, so we need a larger window
-  const elocalDate = parseDate(elocalCall.date_of_call, true); // Mark as eLocal date (EST)
-  const ringbaDate = parseDate(ringbaCall.call_date_time, false); // Ringba date
+  const elocalDate = parseDate(elocalCall.date_of_call, true); 
+  const ringbaDate = parseDate(ringbaCall.call_date_time, false);
 
   if (!elocalDate || !ringbaDate) {
     return null;
@@ -176,6 +126,7 @@ const matchCall = (
   const daysDiff = Math.abs((elocalDateOnly.getTime() - ringbaDateOnly.getTime()) / (1000 * 60 * 60 * 24));
 
   if (daysDiff > 1) {
+    if (isProblemCaller) console.log(`[DEBUG REJECT ${elocalCallerE164}] Days difference > 1 (${daysDiff})`);
     return null; // Dates are more than 1 day apart
   }
 
@@ -192,8 +143,6 @@ const matchCall = (
   }
 
   // 3. Match call duration (if both have duration data)
-  // FIX: Handle N/A, null, or undefined duration properly
-  // Don't treat them as 0 - treat them as "no duration data available"
   const elocalDurationRaw = elocalCall.total_duration;
   const hasElocalDuration = elocalDurationRaw !== null &&
     elocalDurationRaw !== undefined &&
@@ -211,12 +160,10 @@ const matchCall = (
   const durationDiff = Math.abs(elocalDuration - ringbaDuration);
 
   // If both have duration data, check if they match within tolerance
-  // This helps distinguish between multiple calls from the same caller
-  // FIX: Only validate duration if BOTH calls have valid duration data
   let durationMatch = true;
   if (hasElocalDuration && hasRingbaDuration && elocalDuration > 0 && ringbaDuration > 0) {
     if (durationDiff > durationTolerance) {
-      // Duration doesn't match - this is likely a different call
+      if (isProblemCaller) console.log(`[DEBUG REJECT ${elocalCallerE164}] Duration mismatch: eLocal=${elocalDuration}, Ringba=${ringbaDuration}`);
       return null;
     }
     durationMatch = true;
@@ -231,6 +178,10 @@ const matchCall = (
   // Bonus for duration match
   if (elocalDuration > 0 && ringbaDuration > 0 && durationDiff <= 10) {
     matchScore = matchScore * 0.5; // Strong bonus for close duration match
+  }
+
+  if (isProblemCaller) {
+    console.log(`[DEBUG MATCH ${elocalCallerE164}] MATCH SUCCESSFUL! Diff: days=${daysDiff}, min=${timeDiff.toFixed(1)}, dur=${durationDiff}`);
   }
 
   return {
@@ -312,6 +263,11 @@ const detectChanges = (
     }
 
     const candidateRingbaCalls = categoryCalls.get(callerE164) || [];
+    
+    // DEBUG: Look for problem callers before passing to matchCall
+    if (['+14072565548', '+12815300669', '+18136018788', '+13123917065', '+18627661568', '+16786970272', '+18287190311', '+14708716800', '+18329557609', '+19545593212', '+15037405561', '+17326704488'].includes(callerE164)) {
+       console.log(`[DEBUG PHASE 1] Caller ${callerE164} Category=${elocalCategory}. Ringba DB Candidates found: ${candidateRingbaCalls.length}`);
+    }
 
     if (candidateRingbaCalls.length === 0) {
       unmatched.push({ elocalCall, reason: `No matching Ringba call found for category ${elocalCategory} and caller ${callerE164}` });

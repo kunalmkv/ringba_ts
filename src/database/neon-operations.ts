@@ -617,16 +617,10 @@ export const createNeonDbOps = () => {
           return `${year}-${month}-${day}`;
         };
 
-        const datesInRange: string[] = [];
-        const current = new Date(startDate);
-        const end = new Date(endDate);
+        const startStr = formatDateForQuery(startDate);
+        const endStr = formatDateForQuery(endDate);
 
-        while (current <= end) {
-          datesInRange.push(formatDateForQuery(new Date(current)));
-          current.setDate(current.getDate() + 1);
-        }
-
-        console.log(`[Ringba Cost Sync] Querying ringba_original_sync table for dates: ${datesInRange.join(', ')}`);
+        console.log(`[Ringba Cost Sync] Querying ringba_original_sync table for dates: ${startStr} to ${endStr}`);
 
         const result = await sql`
           SELECT 
@@ -635,7 +629,7 @@ export const createNeonDbOps = () => {
             ringba_payout as payout_amount, ringba_revenue_amount as revenue_amount, 
             target_id, call_duration
           FROM public.ringba_original_sync
-          WHERE SUBSTRING(call_timestamp::text, 1, 10) = ANY(${datesInRange})
+          WHERE DATE(call_timestamp) BETWEEN ${startStr}::date AND ${endStr}::date
           ORDER BY caller_id, call_timestamp
         `;
 
