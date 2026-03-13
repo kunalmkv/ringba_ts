@@ -25,6 +25,7 @@
     "migrate:drop-adjustment-cols": "tsx src/database/migrate-drop-adjustment-cols.ts",
     "migrate:ringba-calls-cols": "tsx src/database/migrate-ringba-calls-cols.ts",
     "migrate:ringba-revenue-col": "tsx src/database/migrate-ringba-revenue-col.ts",
+    "migrate:drop-elocal-payout": "tsx src/database/migrate-drop-elocal-payout.ts",
     "sync:ringba-original": "tsx src/test/run-ringba-original-sync.ts",
     "sync:cost": "tsx src/test/run-ringba-cost-sync.ts",
     "scheduler": "tsx src/test/run-sequential-scheduler.ts",

@@ -190,28 +190,29 @@ export const createNeonDbOps = () => {
 
           if (existing.length > 0) {
             // Update the existing fuzzy-matched call
+            // NOTE: ringba_revenue is the authoritative eLocal payout column — it always overwrites.
             await sql`
               UPDATE public.ringba_call_data
               SET
                 category            = ${category},
-                elocal_payout       = ${call.elocalPayout ?? 0},
+                ringba_revenue      = ${call.elocalPayout ?? 0},
                 call_duration       = COALESCE(public.ringba_call_data.call_duration, ${call.totalDuration || null}),
                 adjustment_time     = COALESCE(${call.adjustmentTime || null}, public.ringba_call_data.adjustment_time),
                 adjustment_amount   = COALESCE(${call.adjustmentAmount ?? 0}, public.ringba_call_data.adjustment_amount),
                 unmatched           = ${call.unmatched || false},
                 ringba_id           = COALESCE(public.ringba_call_data.ringba_id, ${call.ringbaInboundCallId || null}),
                 ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null}),
-                ringba_revenue      = COALESCE(public.ringba_call_data.ringba_revenue, ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null}),
                 updated_at          = NOW()
               WHERE id = ${existing[0].id}
             `;
             updated++;
           } else {
             // No fuzzy match found, insert new (with ON CONFLICT fallback for exact matches)
+            // NOTE: elocalPayout is written to ringba_revenue (the authoritative column).
             const result = await sql`
               INSERT INTO public.ringba_call_data (
                 caller_id, call_timestamp, category,
-                elocal_payout, call_duration,
+                call_duration,
                 adjustment_time, adjustment_amount, unmatched,
                 ringba_id, ringba_original_payout, ringba_revenue,
                 created_at, updated_at
@@ -220,27 +221,25 @@ export const createNeonDbOps = () => {
                 ${normalizedCallerId},
                 ${utcTimestamp},
                 ${category},
-                ${call.elocalPayout ?? 0},
                 ${call.totalDuration || null},
                 ${call.adjustmentTime || null},
                 ${call.adjustmentAmount ?? 0},
                 ${call.unmatched || false},
                 ${call.ringbaInboundCallId || null},
                 ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null},
-                ${call.ringbaOriginalRevenue !== undefined ? call.ringbaOriginalRevenue : null},
+                ${call.elocalPayout ?? 0},
                 NOW(), NOW()
               )
               ON CONFLICT (caller_id, call_timestamp)
               DO UPDATE SET
                 category            = EXCLUDED.category,
-                elocal_payout       = EXCLUDED.elocal_payout,
+                ringba_revenue      = EXCLUDED.ringba_revenue,
                 call_duration       = COALESCE(public.ringba_call_data.call_duration, EXCLUDED.call_duration),
                 adjustment_time     = COALESCE(EXCLUDED.adjustment_time, public.ringba_call_data.adjustment_time),
                 adjustment_amount   = COALESCE(EXCLUDED.adjustment_amount, public.ringba_call_data.adjustment_amount),
                 unmatched           = EXCLUDED.unmatched,
                 ringba_id           = COALESCE(public.ringba_call_data.ringba_id, EXCLUDED.ringba_id),
                 ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, EXCLUDED.ringba_original_payout),
-                ringba_revenue      = COALESCE(public.ringba_call_data.ringba_revenue, EXCLUDED.ringba_revenue),
                 updated_at          = NOW()
               RETURNING (xmax = 0) AS was_inserted
             `;
@@ -340,7 +339,7 @@ export const createNeonDbOps = () => {
         if (category) {
           result = await sql`
             SELECT
-              id, caller_id, call_timestamp, elocal_payout, category,
+              id, caller_id, call_timestamp, category,
               ringba_original_payout, ringba_revenue, ringba_id, unmatched,
               adjustment_amount, adjustment_time
             FROM public.ringba_call_data
@@ -351,7 +350,7 @@ export const createNeonDbOps = () => {
         } else {
           result = await sql`
             SELECT
-              id, caller_id, call_timestamp, elocal_payout, category,
+              id, caller_id, call_timestamp, category,
               ringba_original_payout, ringba_revenue, ringba_id, unmatched,
               adjustment_amount, adjustment_time
             FROM public.ringba_call_data
@@ -400,7 +399,7 @@ export const createNeonDbOps = () => {
         const pattern = `%${digits.slice(-10)}%`;
         const result = await sql`
           SELECT
-            id, caller_id, call_timestamp, elocal_payout, category,
+            id, caller_id, call_timestamp, category,
             ringba_original_payout, ringba_revenue, ringba_id, unmatched,
             adjustment_amount, adjustment_time
           FROM public.ringba_call_data
@@ -420,7 +419,7 @@ export const createNeonDbOps = () => {
     async getCallById(callId: number): Promise<DatabaseCallRecord | null> {
       try {
         const result = await sql`
-          SELECT id, caller_id, call_timestamp, elocal_payout, category, unmatched,
+          SELECT id, caller_id, call_timestamp, category, unmatched,
                  adjustment_amount, adjustment_time
           FROM public.ringba_call_data
           WHERE id = ${callId}
@@ -447,7 +446,7 @@ export const createNeonDbOps = () => {
         const result = await sql`
           UPDATE public.ringba_call_data
           SET
-            elocal_payout = ${adjustmentData.elocalPayout ?? 0},
+            ringba_revenue = ${adjustmentData.elocalPayout ?? 0},
             adjustment_time = ${adjustmentData.adjustmentTime || null},
             adjustment_amount = ${adjustmentData.adjustmentAmount ?? 0},
             unmatched = ${false},
@@ -463,13 +462,14 @@ export const createNeonDbOps = () => {
     },
 
     /**
-     * Update ringba_original_payout and ringba_revenue for an eLocal call (Ringba Original Sync).
-     * Uses COALESCE to preserve existing values (don't overwrite if already set).
+     * Update ringba_original_payout for an eLocal call (Ringba Original Sync).
+     * NOTE: ringba_revenue is owned exclusively by the eLocal fetch service and is NOT updated here.
+     * Only ringba_original_payout (the Ringba source-of-truth) and ringba_id are updated.
      */
     async updateOriginalPayout(
       callId: number,
       originalPayout: number,
-      originalRevenue: number,
+      _originalRevenue: number, // No longer written — ringba_revenue is owned by eLocal fetch service
       ringbaInboundCallId: string | null
     ): Promise<{ updated: number }> {
       try {
@@ -477,7 +477,6 @@ export const createNeonDbOps = () => {
           UPDATE public.ringba_call_data
           SET
             ringba_original_payout = COALESCE(ringba_original_payout, ${originalPayout}),
-            ringba_revenue = COALESCE(ringba_revenue, ${originalRevenue}),
             ringba_id = COALESCE(ringba_id, ${ringbaInboundCallId}),
             updated_at = NOW()
           WHERE id = ${callId}
@@ -574,7 +573,8 @@ export const createNeonDbOps = () => {
         if (category) {
           const result = await sql`
             SELECT 
-              id, caller_id, call_timestamp as date_of_call, elocal_payout as payout, 
+              id, caller_id, call_timestamp as date_of_call,
+              ringba_revenue as payout,
               category, ringba_original_payout as original_payout, 
               ringba_revenue as original_revenue, call_duration as total_duration
             FROM public.ringba_call_data
@@ -586,7 +586,8 @@ export const createNeonDbOps = () => {
         } else {
           const result = await sql`
             SELECT 
-              id, caller_id, call_timestamp as date_of_call, elocal_payout as payout, 
+              id, caller_id, call_timestamp as date_of_call,
+              ringba_revenue as payout,
               category, ringba_original_payout as original_payout, 
               ringba_revenue as original_revenue, call_duration as total_duration
             FROM public.ringba_call_data

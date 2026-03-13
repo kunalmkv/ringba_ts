@@ -21,10 +21,12 @@ async function main() {
   };
 
   const march12DateRange = {
-    startDate: '2026-03-12',
-    endDate: '2026-03-12',
+    startDate: new Date('2026-03-12'),
+    endDate: new Date('2026-03-12'),
     startDateFormatted: '03/12/2026',
-    endDateFormatted: '03/12/2026'
+    endDateFormatted: '03/12/2026',
+    startDateURL: '03%2F12%2F2026',
+    endDateURL: '03%2F12%2F2026',
   };
 
   console.log('=== Running Ringba Cost Sync for March 12, 2026 ===');

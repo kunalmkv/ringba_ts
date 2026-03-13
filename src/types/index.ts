@@ -117,11 +117,12 @@ export interface DatabaseCallRecord {
   id: number;
   caller_id: string;
   call_timestamp: string;
-  elocal_payout: string | number;
+  /** elocal_payout column is being dropped in migration. ringba_revenue is the authoritative eLocal payout. */
+  elocal_payout?: string | number | null; // deprecated — will be removed after migration
   category: string;
   ringba_id?: string | null;
   ringba_original_payout?: string | number | null;
-  ringba_revenue?: string | number | null;
+  ringba_revenue?: string | number | null; // authoritative eLocal payout column
   unmatched?: boolean;
   adjustment_amount?: string | number | null;
   adjustment_time?: string | null;

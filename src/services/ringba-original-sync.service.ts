@@ -178,8 +178,8 @@ function matchCall(
 
   if (timeDiff > effectiveWindow) return null;
 
-  // Match payout (if available) - matches ringbav2 line 376-390
-  const elocalPayout = Number(elocalCall.elocal_payout ?? 0);
+  // Use ringba_revenue as the authoritative eLocal payout (per design: eLocal owns ringba_revenue)
+  const elocalPayout = Number(elocalCall.ringba_revenue ?? 0);
   const ringbaPayout = Number(ringbaCall.payout ?? 0);
   const payoutDiff = Math.abs(elocalPayout - ringbaPayout);
 
@@ -431,7 +431,7 @@ export async function syncRingbaOriginalPayout(
         const result = await db.updateOriginalPayout(
           u.elocalCallId,
           u.originalPayout,
-          u.originalRevenue,
+          u.originalRevenue, // kept for API compatibility — ringba_revenue is now owned by eLocal fetch service
           u.ringbaInboundCallId
         );
         if (result.updated > 0) updatedCount++;
