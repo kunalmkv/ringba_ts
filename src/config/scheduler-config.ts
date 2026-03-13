@@ -37,16 +37,15 @@ export interface MasterSchedulerConfig {
 export const DEFAULT_SCHEDULER_CONFIG: MasterSchedulerConfig = {
   timezone: 'Asia/Kolkata',
   schedules: [
-    // Schedule 1: 9:00 PM IST - Standard Sequence
+    // --- NEW: High-Frequency eLocal Fetch (Every 5 minutes from 8 PM to 4 AM) ---
     {
-      name: '9 PM Standard Sync',
-      description: 'Evening data collection and sync',
-      cron: '0 21 * * *',
-      time: '21:00',
+      name: 'High-Frequency eLocal Fetch',
+      description: 'Regular data ingestion every 5 minutes during peak hours',
+      cron: '*/5 20,21,22,23,0,1,2,3 * * *',
+      time: 'Every 5 mins (20:00-03:55)',
       timezone: 'Asia/Kolkata',
       enabled: true,
       services: [
-        // 1. Fetch eLocal Current Day - STATIC
         {
           name: 'Fetch eLocal Current Day - STATIC',
           type: 'elocal-fetch',
@@ -55,7 +54,6 @@ export const DEFAULT_SCHEDULER_CONFIG: MasterSchedulerConfig = {
           description: 'Fetch current day static line calls',
           daysBack: 1
         },
-        // 2. Fetch eLocal Current Day - API
         {
           name: 'Fetch eLocal Current Day - API',
           type: 'elocal-fetch',
@@ -63,7 +61,21 @@ export const DEFAULT_SCHEDULER_CONFIG: MasterSchedulerConfig = {
           category: 'API',
           description: 'Fetch current day API calls',
           daysBack: 1
-        },
+        }
+      ]
+    },
+
+    // Schedule 1: 9:00 PM IST - Standard Sequence (Holistic Sync)
+    {
+      name: '9 PM Standard Sync',
+      description: 'Evening data collection and sync',
+      cron: '0 21 * * *',
+      time: '21:00',
+      timezone: 'Asia/Kolkata',
+      enabled: true,
+      services: [
+        // 1 & 2. (Current day eLocal fetch removed - handled by high-frequency schedule)
+        
         // 3. Ringba Original Sync - Static & API (All Categories)
         {
           name: 'Ringba Original Sync - Current',
@@ -124,24 +136,8 @@ export const DEFAULT_SCHEDULER_CONFIG: MasterSchedulerConfig = {
         },
 
         // --- STANDARD BLOCK ---
-        // 4. Fetch eLocal Current Day - STATIC
-        {
-          name: 'Fetch eLocal Current Day - STATIC',
-          type: 'elocal-fetch',
-          enabled: true,
-          category: 'STATIC',
-          description: 'Fetch current day static line calls',
-          daysBack: 1
-        },
-        // 5. Fetch eLocal Current Day - API
-        {
-          name: 'Fetch eLocal Current Day - API',
-          type: 'elocal-fetch',
-          enabled: true,
-          category: 'API',
-          description: 'Fetch current day API calls',
-          daysBack: 1
-        },
+        // 4 & 5. (Current day eLocal fetch removed - handled by high-frequency schedule)
+        
         // 6. Ringba Original Sync - Current
         {
           name: 'Ringba Original Sync - Current',
@@ -172,24 +168,8 @@ export const DEFAULT_SCHEDULER_CONFIG: MasterSchedulerConfig = {
       timezone: 'Asia/Kolkata',
       enabled: true,
       services: [
-        // 1. Fetch eLocal Current Day - STATIC
-        {
-          name: 'Fetch eLocal Current Day - STATIC',
-          type: 'elocal-fetch',
-          enabled: true,
-          category: 'STATIC',
-          description: 'Fetch current day static line calls',
-          daysBack: 1
-        },
-        // 2. Fetch eLocal Current Day - API
-        {
-          name: 'Fetch eLocal Current Day - API',
-          type: 'elocal-fetch',
-          enabled: true,
-          category: 'API',
-          description: 'Fetch current day API calls',
-          daysBack: 1
-        },
+        // 1 & 2. (Current day eLocal fetch removed - handled by high-frequency schedule)
+        
         // 3. Ringba Original Sync - Current
         {
           name: 'Ringba Original Sync - Current',
