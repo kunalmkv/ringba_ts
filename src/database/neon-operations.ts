@@ -179,10 +179,13 @@ export const createNeonDbOps = () => {
 
           const category = call.category || 'STATIC';
 
-          // Fuzzy match: Look for an existing call from this caller within ±10 minutes
+          // Fuzzy match: Look for an existing call from this caller within ±10 minutes.
+          // IMPORTANT: must also match on category to avoid STATIC rows colliding with API rows
+          // (same caller may appear in both categories at the same time).
           const existing = await sql`
-            SELECT id FROM public.ringba_call_data
+            SELECT id, category FROM public.ringba_call_data
             WHERE caller_id = ${normalizedCallerId}
+              AND category = ${category}
               AND call_timestamp >= ${utcTimestamp}::timestamp - interval '10 minutes'
               AND call_timestamp <= ${utcTimestamp}::timestamp + interval '10 minutes'
             LIMIT 1
@@ -656,16 +659,24 @@ export const createNeonDbOps = () => {
       try {
         let updated = 0;
         for (const match of matches) {
-          const result = await sql`
-            UPDATE public.ringba_call_data
-            SET
-              ringba_id = ${match.ringbaInboundCallId},
-              updated_at = NOW()
-            WHERE id = ${match.elocalCallId}
-            RETURNING id
-          `;
-          if (result.length > 0) {
-            updated++;
+          try {
+            const result = await sql`
+              UPDATE public.ringba_call_data
+              SET
+                ringba_id = ${match.ringbaInboundCallId},
+                updated_at = NOW()
+              WHERE id = ${match.elocalCallId}
+                AND NOT EXISTS (
+                  SELECT 1 FROM public.ringba_call_data
+                  WHERE ringba_id = ${match.ringbaInboundCallId} AND id != ${match.elocalCallId}
+                )
+              RETURNING id
+            `;
+            if (result.length > 0) {
+              updated++;
+            }
+          } catch (e) {
+            console.warn(`[WARN] Skipping ringba_id update for call ${match.elocalCallId}:`, (e as Error).message);
           }
         }
         return { updated };
