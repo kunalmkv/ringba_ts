@@ -179,39 +179,35 @@ export const createNeonDbOps = () => {
 
           const category = call.category || 'STATIC';
 
-          // Fuzzy match: Look for an existing call from this caller within ±10 minutes.
-          // IMPORTANT: must also match on category to avoid STATIC rows colliding with API rows
-          // (same caller may appear in both categories at the same time).
-          const existing = await sql`
-            SELECT id, category FROM public.ringba_call_data
+          // Fuzzy match: UPDATE all rows for this caller within ±10 minutes in one shot.
+          // Using a direct UPDATE (no separate SELECT) ensures ALL duplicate rows in the
+          // window get the correct payout (not just LIMIT 1).
+          // Category filter: only match same-category or untagged (NULL) rows — prevents
+          // STATIC from overwriting API rows and vice versa.
+          const matchResult = await sql`
+            UPDATE public.ringba_call_data
+            SET
+              category            = ${category},
+              ringba_revenue      = ${call.elocalPayout ?? 0},
+              call_duration       = COALESCE(public.ringba_call_data.call_duration, ${call.totalDuration || null}),
+              adjustment_time     = COALESCE(${call.adjustmentTime || null}, public.ringba_call_data.adjustment_time),
+              adjustment_amount   = COALESCE(${call.adjustmentAmount ?? 0}, public.ringba_call_data.adjustment_amount),
+              unmatched           = ${call.unmatched || false},
+              ringba_id           = COALESCE(public.ringba_call_data.ringba_id, ${call.ringbaInboundCallId || null}),
+              ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null}),
+              updated_at          = NOW()
             WHERE caller_id = ${normalizedCallerId}
-              AND category = ${category}
+              AND (category = ${category} OR category IS NULL)
               AND call_timestamp >= ${utcTimestamp}::timestamp - interval '10 minutes'
               AND call_timestamp <= ${utcTimestamp}::timestamp + interval '10 minutes'
-            LIMIT 1
+            RETURNING id
           `;
 
-          if (existing.length > 0) {
-            // Update the existing fuzzy-matched call
-            // NOTE: ringba_revenue is the authoritative eLocal payout column — it always overwrites.
-            await sql`
-              UPDATE public.ringba_call_data
-              SET
-                category            = ${category},
-                ringba_revenue      = ${call.elocalPayout ?? 0},
-                call_duration       = COALESCE(public.ringba_call_data.call_duration, ${call.totalDuration || null}),
-                adjustment_time     = COALESCE(${call.adjustmentTime || null}, public.ringba_call_data.adjustment_time),
-                adjustment_amount   = COALESCE(${call.adjustmentAmount ?? 0}, public.ringba_call_data.adjustment_amount),
-                unmatched           = ${call.unmatched || false},
-                ringba_id           = COALESCE(public.ringba_call_data.ringba_id, ${call.ringbaInboundCallId || null}),
-                ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null}),
-                updated_at          = NOW()
-              WHERE id = ${existing[0].id}
-            `;
+          if (matchResult.length > 0) {
+            // Updated one or more existing rows (covers duplicates too)
             updated++;
           } else {
-            // No fuzzy match found, insert new (with ON CONFLICT fallback for exact matches)
-            // NOTE: elocalPayout is written to ringba_revenue (the authoritative column).
+            // No match found — insert a fresh row, with ON CONFLICT safety net
             const result = await sql`
               INSERT INTO public.ringba_call_data (
                 caller_id, call_timestamp, category,
@@ -235,6 +231,7 @@ export const createNeonDbOps = () => {
               )
               ON CONFLICT (caller_id, call_timestamp)
               DO UPDATE SET
+                -- category is owned by eLocal fetch service (only caller of insertCallsBatch) — always overwrite
                 category            = EXCLUDED.category,
                 ringba_revenue      = EXCLUDED.ringba_revenue,
                 call_duration       = COALESCE(public.ringba_call_data.call_duration, EXCLUDED.call_duration),
@@ -246,7 +243,7 @@ export const createNeonDbOps = () => {
                 updated_at          = NOW()
               RETURNING (xmax = 0) AS was_inserted
             `;
-  
+
             if (result.length > 0) {
               if ((result[0] as any).was_inserted) inserted++;
               else updated++;
