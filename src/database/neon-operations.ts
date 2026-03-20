@@ -179,11 +179,19 @@ export const createNeonDbOps = () => {
 
           const category = call.category || 'STATIC';
 
-          // Fuzzy match: UPDATE all rows for this caller within ±10 minutes in one shot.
-          // Using a direct UPDATE (no separate SELECT) ensures ALL duplicate rows in the
-          // window get the correct payout (not just LIMIT 1).
-          // Category filter: only match same-category or untagged (NULL) rows — prevents
-          // STATIC from overwriting API rows and vice versa.
+          // targetName-aware fuzzy match:
+          // The `targetName` column in ringba_call_data is populated by the Ringba sync
+          // and uniquely identifies which campaign a call belongs to:
+          //   STATIC: targetName ILIKE '%static%'   (e.g. "Elocal - Appliance repair - Static Line")
+          //   API:    targetName ILIKE '%appliance repair%' AND NOT ILIKE '%static%'
+          // We use this to prevent STATIC fetch from stealing API rows and vice versa.
+          // Rows with NULL targetName (not yet Ringba-synced) are always matched —
+          // eLocal is the source of truth and will set the correct category.
+          const targetNameFilter =
+            category === 'STATIC'
+              ? sql`AND ("targetName" ILIKE '%static%' OR "targetName" IS NULL)`
+              : sql`AND (("targetName" ILIKE '%appliance repair%' AND "targetName" NOT ILIKE '%static%') OR "targetName" IS NULL)`;
+
           const matchResult = await sql`
             UPDATE public.ringba_call_data
             SET
@@ -197,9 +205,9 @@ export const createNeonDbOps = () => {
               ringba_original_payout = COALESCE(public.ringba_call_data.ringba_original_payout, ${call.ringbaOriginalPayout !== undefined ? call.ringbaOriginalPayout : null}),
               updated_at          = NOW()
             WHERE caller_id = ${normalizedCallerId}
-              AND (category = ${category} OR category IS NULL)
               AND call_timestamp >= ${utcTimestamp}::timestamp - interval '10 minutes'
               AND call_timestamp <= ${utcTimestamp}::timestamp + interval '10 minutes'
+              ${targetNameFilter}
             RETURNING id
           `;
 
